@@ -1,0 +1,330 @@
+import sqlite3
+from datetime import datetime
+import tkinter as tk
+from tkinter import messagebox
+import bcrypt
+import requests
+
+
+# ------------------------
+# DATU BĀZE
+# ------------------------
+class Database:
+    def __init__(self):
+        self.conn = sqlite3.connect("restorans2.db")
+        self.cursor = self.conn.cursor()
+        self.create_tables()
+
+    def create_tables(self):
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL
+        )
+        """)
+
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS klienti (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            vards TEXT NOT NULL,
+            telefons TEXT NOT NULL
+        )
+        """)
+
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS galdini (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            vietas INTEGER NOT NULL
+        )
+        """)
+
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS rezervacijas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            klients_id INTEGER,
+            galdins_id INTEGER,
+            datums TEXT,
+            laiks TEXT
+        )
+        """)
+
+        self.conn.commit()
+
+    def commit(self):
+        self.conn.commit()
+
+    def close(self):
+        self.conn.close()
+
+
+# ------------------------
+# LOGIN
+# ------------------------
+class AuthGUI:
+    def __init__(self, db):
+        self.db = db
+        self.logged_in = False
+
+    def login_gui(self):
+
+        def login():
+            user = username_entry.get().strip()
+            pw = password_entry.get().strip().encode("utf-8")
+
+            self.db.cursor.execute("SELECT password FROM users WHERE username=?", (user,))
+            result = self.db.cursor.fetchone()
+
+            if result and bcrypt.checkpw(pw, result[0].encode("utf-8")):
+                messagebox.showinfo("OK", "Login veiksmīgs!")
+                self.logged_in = True
+                root.destroy()
+            else:
+                messagebox.showerror("Kļūda", "Nepareizi dati!")
+
+        def register():
+            user = username_entry.get().strip()
+            pw = password_entry.get().strip()
+
+            if len(pw) < 8:
+                messagebox.showerror("Kļūda", "Parole vismaz 8 simboli!")
+                return
+
+            pw_hash = bcrypt.hashpw(pw.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+            try:
+                self.db.cursor.execute(
+                    "INSERT INTO users (username, password) VALUES (?, ?)",
+                    (user, pw_hash)
+                )
+                self.db.commit()
+                messagebox.showinfo("OK", "Reģistrēts!")
+            except sqlite3.IntegrityError:
+                messagebox.showerror("Kļūda", "Lietotājs eksistē!")
+
+        root = tk.Tk()
+        root.title("Login")
+        root.geometry("300x200")
+
+        tk.Label(root, text="Lietotājs").pack()
+        username_entry = tk.Entry(root)
+        username_entry.pack()
+
+        tk.Label(root, text="Parole").pack()
+        password_entry = tk.Entry(root, show="*")
+        password_entry.pack()
+
+        tk.Button(root, text="Login", bg="green", fg="white", command=login).pack(pady=5)
+        tk.Button(root, text="Reģistrēties", bg="green", fg="white", command=register).pack(pady=5)
+
+        root.mainloop()
+
+        return self.logged_in
+
+
+# ------------------------
+# SISTĒMA
+# ------------------------
+class RestaurantSystem:
+    def __init__(self, db):
+        self.db = db
+
+    def start_gui(self):
+        root = tk.Tk()
+        root.title("Restorāns")
+        root.geometry("420x600")
+
+        def btn(txt, cmd):
+            return tk.Button(root, text=txt, command=cmd, bg="green", fg="white", width=30, height=2)
+
+        btn("Pievienot klientu", self.gui_pievienot_klientu).pack(pady=5)
+        btn("Dzēst klientu", self.gui_dzest_klientu).pack(pady=5)
+        btn("Parādīt klientus", self.gui_paradit_klientus).pack(pady=5)
+
+        btn("Pievienot galdiņu", self.gui_pievienot_galdinu).pack(pady=5)
+        btn("Dzēst galdiņu", self.gui_dzest_galdinu).pack(pady=5)
+        btn("Parādīt galdiņus", self.gui_paradit_galdinus).pack(pady=5)
+
+        btn("Rezervēt galdiņu", self.gui_rezervet).pack(pady=5)
+        btn("Dzēst rezervāciju", self.gui_dzest_rezervaciju).pack(pady=5)
+        btn("Parādīt rezervācijas", self.gui_paradit_rezervacijas).pack(pady=5)
+
+        btn("Parādīt ēdienkarti", self.gui_paradit_edienkarti).pack(pady=5)
+
+        btn("Iziet", root.destroy).pack(pady=10)
+
+        root.mainloop()
+
+    # ===== KLIENTI =====
+    def gui_pievienot_klientu(self):
+        win = tk.Toplevel()
+        tk.Label(win, text="Vārds").pack()
+        v = tk.Entry(win)
+        v.pack()
+
+        tk.Label(win, text="Telefons").pack()
+        t = tk.Entry(win)
+        t.pack()
+
+        def save():
+            self.db.cursor.execute("INSERT INTO klienti (vards, telefons) VALUES (?, ?)", (v.get(), t.get()))
+            self.db.commit()
+            messagebox.showinfo("OK", "Pievienots!")
+            win.destroy()
+
+        tk.Button(win, text="Saglabāt", bg="green", fg="white", command=save).pack()
+
+    def gui_dzest_klientu(self):
+        win = tk.Toplevel()
+        tk.Label(win, text="ID").pack()
+        e = tk.Entry(win)
+        e.pack()
+
+        def delete():
+            self.db.cursor.execute("DELETE FROM klienti WHERE id=?", (e.get(),))
+            self.db.commit()
+            messagebox.showinfo("OK", "Dzēsts!")
+            win.destroy()
+
+        tk.Button(win, text="Dzēst", bg="green", fg="white", command=delete).pack()
+
+    def gui_paradit_klientus(self):
+        win = tk.Toplevel()
+        text = tk.Text(win)
+        text.pack()
+
+        for k in self.db.cursor.execute("SELECT * FROM klienti"):
+            text.insert(tk.END, f"ID: {k[0]} | {k[1]} | {k[2]}\n")
+
+    # ===== GALDIŅI =====
+    def gui_pievienot_galdinu(self):
+        win = tk.Toplevel()
+        tk.Label(win, text="Vietas").pack()
+        e = tk.Entry(win)
+        e.pack()
+
+        def save():
+            self.db.cursor.execute("INSERT INTO galdini (vietas) VALUES (?)", (e.get(),))
+            self.db.commit()
+            messagebox.showinfo("OK", "Pievienots!")
+            win.destroy()
+
+        tk.Button(win, text="Saglabāt", bg="green", fg="white", command=save).pack()
+
+    def gui_dzest_galdinu(self):
+        win = tk.Toplevel()
+        tk.Label(win, text="ID").pack()
+        e = tk.Entry(win)
+        e.pack()
+
+        def delete():
+            self.db.cursor.execute("DELETE FROM galdini WHERE id=?", (e.get(),))
+            self.db.commit()
+            messagebox.showinfo("OK", "Dzēsts!")
+            win.destroy()
+
+        tk.Button(win, text="Dzēst", bg="green", fg="white", command=delete).pack()
+
+    def gui_paradit_galdinus(self):
+        win = tk.Toplevel()
+        text = tk.Text(win)
+        text.pack()
+
+        for g in self.db.cursor.execute("SELECT * FROM galdini"):
+            text.insert(tk.END, f"Galdiņš ID: {g[0]} | Vietas: {g[1]}\n")
+
+    # ===== REZERVĀCIJAS =====
+    def gui_rezervet(self):
+        win = tk.Toplevel()
+        fields = ["Klienta ID", "Galdiņa ID", "Datums", "Laiks"]
+        entries = {}
+
+        for f in fields:
+            tk.Label(win, text=f).pack()
+            e = tk.Entry(win)
+            e.pack()
+            entries[f] = e
+
+        def save():
+            self.db.cursor.execute(
+                "INSERT INTO rezervacijas VALUES (NULL, ?, ?, ?, ?)",
+                (entries["Klienta ID"].get(),
+                 entries["Galdiņa ID"].get(),
+                 entries["Datums"].get(),
+                 entries["Laiks"].get())
+            )
+            self.db.commit()
+            messagebox.showinfo("OK", "Rezervēts!")
+            win.destroy()
+
+        tk.Button(win, text="Saglabāt", bg="green", fg="white", command=save).pack()
+
+    def gui_dzest_rezervaciju(self):
+        win = tk.Toplevel()
+        tk.Label(win, text="ID").pack()
+        e = tk.Entry(win)
+        e.pack()
+
+        def delete():
+            self.db.cursor.execute("DELETE FROM rezervacijas WHERE id=?", (e.get(),))
+            self.db.commit()
+            messagebox.showinfo("OK", "Dzēsts!")
+            win.destroy()
+
+        tk.Button(win, text="Dzēst", bg="green", fg="white", command=delete).pack()
+
+    def gui_paradit_rezervacijas(self):
+        win = tk.Toplevel()
+        text = tk.Text(win)
+        text.pack()
+
+        for r in self.db.cursor.execute("""
+        SELECT rezervacijas.id, klienti.vards, galdini.vietas, datums, laiks
+        FROM rezervacijas
+        JOIN klienti ON rezervacijas.klients_id = klienti.id
+        JOIN galdini ON rezervacijas.galdins_id = galdini.id
+        """):
+            text.insert(tk.END, f"{r}\n")
+
+    # ===== ĒDIENKARTE =====
+    def gui_paradit_edienkarti(self):
+        win = tk.Toplevel()
+        win.title("Ēdienkarte")
+
+        text = tk.Text(win, width=65, height=25)
+        text.pack()
+
+        text.tag_config("title", foreground="green", font=("Arial", 14, "bold"))
+        text.tag_config("meal", foreground="blue", font=("Arial", 11, "bold"))
+        text.tag_config("info", foreground="black")
+
+        try:
+            r = requests.get("https://www.themealdb.com/api/json/v1/1/search.php?f=a")
+            data = r.json()
+
+            text.insert(tk.END, "🍽️ ĒDIENKARTE\n\n", "title")
+
+            for meal in data["meals"][:10]:
+                text.insert(tk.END, f"{meal['strMeal']}\n", "meal")
+                text.insert(tk.END,
+                            f"Kategorija: {meal['strCategory']}\n"
+                            f"Izcelsme: {meal['strArea']}\n",
+                            "info")
+                text.insert(tk.END, "-" * 40 + "\n")
+
+        except:
+            text.insert(tk.END, "Kļūda ar API")
+
+
+# ------------------------
+# PROGRAMMAS STARTS
+# ------------------------
+db = Database()
+
+auth = AuthGUI(db)
+
+if auth.login_gui():
+    system = RestaurantSystem(db)
+    system.start_gui()
+
+db.close()
